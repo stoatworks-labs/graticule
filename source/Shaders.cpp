@@ -12,7 +12,8 @@ void main()
 }
 )";
 
-const char* const kFragmentShader = R"(#version 410 core
+const char* const kFragmentShader =
+R"(#version 410 core
 out vec4 fragColour;
 
 uniform ivec2 uSize;
@@ -223,6 +224,10 @@ bool uHit( ivec2 p, int li )
 	return glyphBit( uText[ L.x + ci ], lx, ly );
 }
 
+)"
+// MSVC caps a single string literal at about 16 KB (C2026), so the shader
+// is several adjacent raw strings, which the compiler concatenates.
+R"(
 // ---------------------------------------------------------------------------
 // Grid lines along one axis.
 //
@@ -342,6 +347,10 @@ bool checkerBit( ivec2 p, int cell )
 	return imod( idiv( p.x, c ) + idiv( p.y, c ), 2 ) == 0;
 }
 
+)"
+// MSVC caps a single string literal at about 16 KB (C2026), so the shader
+// is several adjacent raw strings, which the compiler concatenates.
+R"(
 // ---------------------------------------------------------------------------
 // The patterns.
 // ---------------------------------------------------------------------------

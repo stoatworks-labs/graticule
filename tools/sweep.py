@@ -64,7 +64,9 @@ SKIP = {
 # visible. Pattern values: 0 SMPTE, 1 75% bars, 2 100% bars, 3 grid,
 # 4 alignment, 5 LED tiles, 6 solid, 7 greyscale, 8 pixel check.
 GRID = {"Pattern": 3, "Burn-in": 0}
-LED = {"Pattern": 5, "Burn-in": 0}
+# Forty-pixel tiles, so a whole cabinet -- and its neighbour of the other
+# colour -- fits inside even the 160x90 raster CI sweeps at.
+LED = {"Pattern": 5, "Burn-in": 0, "Tile Width": 40, "Tile Height": 40}
 SOLID = {"Pattern": 6, "Burn-in": 0}
 GREY = {"Pattern": 7, "Burn-in": 0}
 PIX = {"Pattern": 8, "Burn-in": 0}
@@ -96,8 +98,8 @@ CONTEXT = {
     "Tile Height": LED,
     # A module of 1024 in a 192px tile draws no line, same as 0; sweep to a
     # module that fits.
-    "Module Width": dict(LED, **{"_high": 64}),
-    "Module Height": dict(LED, **{"_high": 64}),
+    "Module Width": dict(LED, **{"_high": 20}),
+    "Module Height": dict(LED, **{"_high": 20}),
     "Origin X": LED,
     "Origin Y": LED,
     "Checker": LED,
@@ -124,7 +126,9 @@ CONTEXT = {
     "Per Channel": GREY,
     "Cell": PIX,
     "Line Bursts": PIX,
-    "Edge Border": ALIGN,
+    # The corner brackets run along the edges too, and on a small raster
+    # they cover all of them, so the border is swept with them off.
+    "Edge Border": dict(ALIGN, **{"Corner Markers": 0}),
     "Corner Markers": ALIGN,
     "Corner Size": ALIGN,
     "Safe Area A %": ALIGN,
@@ -231,6 +235,9 @@ def sweep_one(job):
     a = render(f"{SCRATCH}/{pid}_lo.png", lo, frames)
     b = render(f"{SCRATCH}/{pid}_hi.png", hi, frames)
     fraction, count = difference(a, b)
+    # Progress as it happens, on stderr, so a run that is cut off by a CI
+    # timeout still says how far it got and how long each one took.
+    print(f"  swept {pid:3d} {name}", file=sys.stderr, flush=True)
     return pid, name, fraction, count
 
 

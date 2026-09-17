@@ -42,10 +42,13 @@ jobs:
         run: python3 tools/check_presets.py
 
       - name: Controls
-        # At 320x180, because the runner has no GPU and the question is only
-        # whether a control changed ANY subpixel.
-        timeout-minutes: 20
-        run: python3 tools/sweep.py --size 320x180
+        # At 160x90, because the runner has no GPU and the question is only
+        # whether a control changed ANY subpixel. The first run of this step
+        # at 320x180 was still going at twenty minutes -- software
+        # rasterisation, 138 renders, and an eight-wide pool on a three-core
+        # runner. Two at a time and a quarter of the pixels.
+        timeout-minutes: 25
+        run: python3 tools/sweep.py --size 160x90 --jobs 2
 
       - uses: actions/upload-artifact@v4
         with:

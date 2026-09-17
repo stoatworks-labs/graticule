@@ -70,11 +70,13 @@ FILES = [
 	"source/Shaders.cpp",
 ]
 
+# A shader may be several adjacent raw strings (MSVC caps one literal at
+# about 16 KB), so everything up to the terminating semicolon is joined.
 named = {}
 for f in FILES:
 	text = pathlib.Path( f ).read_text()
-	for m in re.finditer( r'(\w+)\s*=\s*R"\((.*?)\)"', text, re.S ):
-		named[ m.group( 1 ) ] = m.group( 2 )
+	for m in re.finditer( r'(\w+)\s*=\s*((?:\s*(?://[^\n]*\n)*\s*R"\(.*?\)")+)\s*;', text, re.S ):
+		named[ m.group( 1 ) ] = "".join( re.findall( r'R"\((.*?)\)"', m.group( 2 ), re.S ) )
 
 def emit( name, body ):
 	ext = ".vert" if re.search( r"\bgl_Position\s*=", body ) else ".frag"
