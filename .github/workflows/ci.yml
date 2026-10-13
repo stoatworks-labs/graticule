@@ -35,19 +35,27 @@ jobs:
       - name: The suites
         # Deterministic, and the only GPU they need is whatever the runner has:
         # the font, the colours and the RP 219 geometry need none at all, and
-        # the pixel checks render a 640x360 frame a few dozen times.
+        # the pixel checks render a 640x360 frame a few dozen times. Each
+        # test has a CTest TIMEOUT, so a hang fails with its name long before
+        # this step's own limit.
+        timeout-minutes: 15
         run: ctest --test-dir build --output-on-failure
 
       - name: Presets
         run: python3 tools/check_presets.py
 
       - name: Controls
-        # At 160x90, because the runner has no GPU and the question is only
-        # whether a control changed ANY subpixel. The first run of this step
-        # at 320x180 was still going at twenty minutes -- software
-        # rasterisation, 138 renders, and an eight-wide pool on a three-core
-        # runner. Two at a time and a quarter of the pixels.
-        timeout-minutes: 25
+        # The runner has no GPU. Under its software renderer a frame is cheap
+        # and a new shader program is not: the first draw of each one is a
+        # compile of the pattern shader, over 20 s here. The sweep used to
+        # start a process per render, paid that ~140 times, and ran out of
+        # this step's time on every push from the first (20 minutes, then 25).
+        # It now renders in batches, one compile each: two batches plus one
+        # reference render, on a three-core runner. 160x90 because the
+        # question is only whether a control changed ANY subpixel. sweep.py
+        # kills a batch that runs past its --timeout (300 s) and names the job
+        # it was in, well inside this step's limit.
+        timeout-minutes: 10
         run: python3 tools/sweep.py --size 160x90 --jobs 2
 
       - uses: actions/upload-artifact@v4

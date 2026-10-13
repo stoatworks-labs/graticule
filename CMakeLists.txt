@@ -172,4 +172,12 @@ if(GRATICULE_BUILD_TOOLS AND APPLE)
     add_test(NAME defaults COMMAND gttest --defaults)
     add_test(NAME names    COMMAND gttest --names)
     add_test(NAME pixels   COMMAND gttest --pixels)
+
+    # A hang fails here, by name, instead of running the CI job out of time.
+    # The five that never touch GL take milliseconds. --pixels compiles the
+    # pattern shader once for each of its seven fresh instances: 0.2 s on a
+    # GPU, 75 s under GTTEST_SOFTWARE=1 on an M4 Max, 163 s on GitHub's macOS
+    # runner -- so its ceiling sits about three times over the runner.
+    set_tests_properties(font colours bars defaults names PROPERTIES TIMEOUT 30)
+    set_tests_properties(pixels PROPERTIES TIMEOUT 480)
 endif()

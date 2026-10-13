@@ -52,6 +52,12 @@ No release tag, no website registration, no browser demo.
   clean build and a green test run do not. Unlike gridiron, this source draws with no input
   and no file, so oxbow's PASS verdict is meaningful here and `verify.sh` requires it.
 - Anything the release job does that can be done locally goes in `tools/verify.sh`.
+- **CI has no GPU, and a new GL program is a compile.** Under the runner's software
+  renderer the first draw of every program compiles the whole pattern shader, over 20 s,
+  while a 160x90 frame after it costs hundredths of a second. The sweep once started a
+  `gttest` per render and timed the CI job out on every push from 2026-09-17 to
+  2026-10-12. Anything that renders many frames shares one program (`gttest --batch`);
+  `GTTEST_SOFTWARE=1` reproduces the runner locally.
 
 ## Do not trust
 

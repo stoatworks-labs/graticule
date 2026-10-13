@@ -9,11 +9,33 @@ catches that.
 So: render each parameter at both ends of its range against the same pattern,
 and report any that made no difference at all.
 
-    python3 tools/sweep.py
+    python3 tools/sweep.py [--size WxH] [--jobs N] [--timeout S]
 
-Exit code 1 means something is dead.
+Exit code 1 means something is dead, a negative control failed, or a render
+hung.
 
 ------------------------------------------------------------------ the traps
+
+**One process per batch, never one per render.** Each new GL program pays for
+its shader on its first draw: milliseconds on a GPU, but over 20 s under the
+software renderer GitHub's macOS runner falls back to. This used to start a
+fresh `gttest --out` for each of its ~140 renders and ran the CI step out of
+its 25 minutes, under three quarters of the way down the list. Now
+`gttest --batch` draws every render in a batch with one compiled program, and
+`--jobs` is the number of batches -- each one a compile. `GTTEST_SOFTWARE=1`
+reproduces the runner's renderer on a Mac with a GPU.
+
+**A sweep that cannot report a dead control proves nothing.** So every run
+carries three controls of its own, and fails if any of them does:
+  - the same job is rendered first and last in every batch and must come out
+    identical -- otherwise something carries over from job to job and every
+    control would look alive;
+  - a control the pattern does not read (Pitch on a solid field) must read dead;
+  - one setting is rendered in a batch and through `gttest --out`, the host's
+    ProcessOpenGL path in a fresh process, and the two must be identical.
+
+**A hang fails with a name.** Each batch has `--timeout` seconds; past that it
+is killed and the job it was in is reported.
 
 **Most controls only act on one pattern.** The grid controls are invisible on
 the bars and the tile controls are invisible on the grid -- correctly. So every
@@ -45,6 +67,8 @@ import re
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 import zlib
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -53,6 +77,10 @@ SCRATCH = tempfile.mkdtemp(prefix="gtsweep")
 
 WIDTH, HEIGHT = 640, 360
 FRAMES = 1
+# Seconds per gttest process. A batch at 160x90 takes about 7 s under
+# GTTEST_SOFTWARE=1 on an M4 Max, nearly all of it the one compile, and the
+# CI runner is two to three times slower; on a GPU it is under a second.
+TIMEOUT = 300
 
 # Parameters that cannot or must not be swept, with the reason.
 SKIP = {
@@ -149,6 +177,11 @@ CONTEXT = {
     "Plate": {"Pattern": 6},
 }
 
+# The sweep's own controls; see the docstring.
+REPEAT = ({"Pattern": 0}, 1)
+KNOWN_DEAD = ("Pitch", SOLID, 2, 1024)
+REFERENCE = ({"Pattern": 0, "Marker": 1, "Frame Counter": 1, "Text": "GT01"}, 16)
+
 
 def parameters():
     """id, name, kind, low, high from the harness's own declaration."""
@@ -175,16 +208,86 @@ def parameters():
     return found
 
 
-def render(path, overrides, frames):
-    args = [BIN, "--out", path, "--size", f"{WIDTH}x{HEIGHT}", "--frames", str(frames)]
-    merged = {k: v for k, v in overrides.items() if not k.startswith("_")}
-    for name, value in merged.items():
+def job(path, overrides, frames, label):
+    sets = {k: v for k, v in overrides.items() if not k.startswith("_")}
+    return {"path": path, "sets": sets, "frames": frames, "label": label}
+
+
+def batch_line(j):
+    """One line of `gttest --batch`: tab-separated, since names have spaces."""
+    fields = [j["path"], f"{WIDTH}x{HEIGHT}", str(j["frames"])]
+    fields += [f"{name}={value}" for name, value in j["sets"].items()]
+    return "\t".join(fields) + "\n"
+
+
+def run_batch(index, chunk, timeout):
+    """Every job in `chunk` through one gttest process -- one shader compile.
+    Returns None, or what went wrong."""
+    listing = pathlib.Path(f"{SCRATCH}/batch{index}.tsv")
+    listing.write_text("".join(batch_line(j) for j in chunk))
+    by_path = {j["path"]: j for j in chunk}
+
+    proc = subprocess.Popen([BIN, "--batch", str(listing)], stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT, text=True)
+    killed = threading.Event()
+
+    def kill():
+        killed.set()
+        proc.kill()
+
+    timer = threading.Timer(timeout, kill)
+    timer.start()
+    finished, output = 0, []
+    try:
+        for text in proc.stdout:
+            output.append(text)
+            word, _, rest = text.rstrip("\n").partition(" ")
+            if word == "gl" and index == 0:
+                print(f"  renderer: {rest}", file=sys.stderr, flush=True)
+            if word != "done":
+                continue
+            took, _, path = rest.partition(" ")
+            j = by_path.get(path, {})
+            if finished == 0:
+                # The first draw carries the shader compile.
+                print(f"  batch {index}: first frame {took} s", file=sys.stderr, flush=True)
+            elif "swept" in j:
+                # Progress as it happens, on stderr, so a run that is cut off
+                # still says how far it got and how long each one took.
+                pid, name = j["swept"]
+                print(f"  swept {pid:3d} {name}  ({took} s)", file=sys.stderr, flush=True)
+            finished += 1
+        proc.wait()
+    finally:
+        timer.cancel()
+
+    if killed.is_set():
+        where = chunk[finished]["label"] if finished < len(chunk) else "after the last job"
+        return (f"batch {index} HUNG: killed after {timeout} s in '{where}' "
+                f"({finished} of {len(chunk)} jobs done)")
+    if proc.returncode != 0:
+        return f"batch {index} failed (exit {proc.returncode}):\n" + "".join(output[-20:])
+    return None
+
+
+def run_reference(timeout):
+    """REFERENCE through `gttest --out`: ProcessOpenGL, in a fresh process."""
+    sets, frames = REFERENCE
+    args = [BIN, "--out", f"{SCRATCH}/reference_out.png", "--size", f"{WIDTH}x{HEIGHT}",
+            "--frames", str(frames)]
+    for name, value in sets.items():
         args += ["--set", f"{name}={value}"]
-    r = subprocess.run(args, capture_output=True, text=True)
+    try:
+        r = subprocess.run(args, capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return f"the reference render HUNG: gttest --out killed after {timeout} s"
     if r.returncode != 0:
-        print("render failed:", " ".join(args), r.stdout, r.stderr)
-        sys.exit(1)
-    return pathlib.Path(path).read_bytes()
+        return "the reference render failed: " + " ".join(args) + "\n" + r.stdout + r.stderr
+    return None
+
+
+def compare(a, b):
+    return difference(pathlib.Path(a).read_bytes(), pathlib.Path(b).read_bytes())
 
 
 def pixels(png):
@@ -219,8 +322,8 @@ def difference(a, b):
     return changed / max(len(pa), 1), changed
 
 
-def sweep_one(job):
-    pid, name, low, high, context = job
+def plan(key, name, low, high, context):
+    """The low and high renders of one control, as batch jobs."""
     frames = context.get("_frames", FRAMES)
     # The marker moves with time; a frame count of 16 puts it a quarter of the
     # way across at 60 fps, where the sweep can see it.
@@ -231,14 +334,8 @@ def sweep_one(job):
     hi = dict(context)
     lo[name] = context.get("_low", low)
     hi[name] = context.get("_high", high)
-
-    a = render(f"{SCRATCH}/{pid}_lo.png", lo, frames)
-    b = render(f"{SCRATCH}/{pid}_hi.png", hi, frames)
-    fraction, count = difference(a, b)
-    # Progress as it happens, on stderr, so a run that is cut off by a CI
-    # timeout still says how far it got and how long each one took.
-    print(f"  swept {pid:3d} {name}", file=sys.stderr, flush=True)
-    return pid, name, fraction, count
+    return (job(f"{SCRATCH}/{key}_lo.png", lo, frames, f"{name} low"),
+            job(f"{SCRATCH}/{key}_hi.png", hi, frames, f"{name} high"))
 
 
 def main():
@@ -246,7 +343,10 @@ def main():
 
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--size", default="%dx%d" % (WIDTH, HEIGHT))
-    ap.add_argument("--jobs", type=int, default=0)
+    ap.add_argument("--jobs", type=int, default=0,
+                    help="batches, one gttest process and one shader compile each")
+    ap.add_argument("--timeout", type=float, default=TIMEOUT,
+                    help="seconds a batch may take before it is killed as hung")
     args = ap.parse_args()
     if "x" in args.size:
         WIDTH, HEIGHT = (int(v) for v in args.size.split("x", 1))
@@ -268,13 +368,43 @@ def main():
         context = CONTEXT.get(name, {})
         work.append((pid, name, low, high, context))
 
-    results = []
-    with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as pool:
-        for r in pool.map(sweep_one, work):
-            results.append(r)
+    # Dealt round-robin, so the sixteen-frame marker controls do not all land
+    # in one batch.
+    chunks = [[] for _ in range(max(1, min(jobs, len(work))))]
+    swept = []
+    for k, (pid, name, low, high, context) in enumerate(work):
+        lo, hi = plan(pid, name, low, high, context)
+        hi["swept"] = (pid, name)
+        chunks[k % len(chunks)] += [lo, hi]
+        swept.append((pid, name, lo["path"], hi["path"]))
+
+    dead_name, dead_context, dead_low, dead_high = KNOWN_DEAD
+    known_dead = plan("known_dead", dead_name, dead_low, dead_high, dead_context)
+    reference = job(f"{SCRATCH}/reference_batch.png", REFERENCE[0], REFERENCE[1], "the reference")
+    chunks[0] += [*known_dead, reference]
+
+    repeats = []
+    for i, chunk in enumerate(chunks):
+        first = job(f"{SCRATCH}/repeat{i}_first.png", REPEAT[0], REPEAT[1], "the repeat, first")
+        last = job(f"{SCRATCH}/repeat{i}_last.png", REPEAT[0], REPEAT[1], "the repeat, last")
+        chunk.insert(0, first)
+        chunk.append(last)
+        repeats.append((first["path"], last["path"]))
+
+    start = time.monotonic()
+    with concurrent.futures.ThreadPoolExecutor(max_workers=len(chunks) + 1) as pool:
+        futures = [pool.submit(run_batch, i, c, args.timeout) for i, c in enumerate(chunks)]
+        futures.append(pool.submit(run_reference, args.timeout))
+        errors = [e for e in (f.result() for f in futures) if e]
+    elapsed = time.monotonic() - start
+    if errors:
+        for e in errors:
+            print(e)
+        return 1
 
     dead = []
-    for pid, name, fraction, count in sorted(results):
+    for pid, name, lo, hi in sorted(swept):
+        fraction, count = compare(lo, hi)
         if count == 0:
             dead.append(name)
             print(f"DEAD  {pid:4d}  {name}")
@@ -282,14 +412,36 @@ def main():
             print(f"ok    {pid:4d}  {name}  ({count} subpixels, {fraction * 100:.2f}%)")
 
     print()
+    broken = []
+
+    def control(count, what, why):
+        ok = count == 0
+        line = f"{what}: {count} subpixels" + ("" if ok else f" -- {why}")
+        print(f"{'ok  ' if ok else 'FAIL'}  control  {line}")
+        if not ok:
+            broken.append(line)
+
+    for i, (first, last) in enumerate(repeats):
+        control(compare(first, last)[1], f"batch {i}, the same job first and last",
+                "something carries over between jobs, so every control would look alive")
+    control(compare(*(j["path"] for j in known_dead))[1],
+            f"{dead_name} on a solid field, which does not read it",
+            "the sweep cannot see a dead control")
+    control(compare(reference["path"], f"{SCRATCH}/reference_out.png")[1],
+            "a batch render against the same through ProcessOpenGL (--out)",
+            "the batch no longer draws what a host would")
+
+    print()
     for name, why in skipped:
         print(f"skip  {name}: {why}")
 
-    print(f"\n{len(results)} swept, {len(dead)} dead, {len(skipped)} skipped, {jobs} at a time")
+    print(f"\n{len(swept)} swept, {len(dead)} dead, {len(skipped)} skipped, "
+          f"{len(chunks)} batches, {elapsed:.1f} s")
     if dead:
         print("\nDEAD CONTROLS: " + ", ".join(dead))
-        return 1
-    return 0
+    if broken:
+        print("\nSWEEP CONTROLS FAILED: " + "; ".join(broken))
+    return 1 if dead or broken else 0
 
 
 if __name__ == "__main__":

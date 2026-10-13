@@ -13,15 +13,22 @@
 //   --list                  the fleet's parameter listing, for tools/sweep.py
 //   --pixels                render each pattern and check specific pixels
 //   --out f.png [--size WxH] [--frames N] [--set Name=value ...]
-//                           render a frame, for eyes and for the sweep
+//                           render a frame, for eyes
+//   --batch jobs.tsv        render many frames with one compiled shader, for
+//                           tools/sweep.py
+//
+// GTTEST_SOFTWARE=1 forces Apple's software renderer, which a GPU-less CI
+// runner falls back to.
 #include <OpenGL/OpenGL.h>
 #include <OpenGL/gl3.h>
 
 #include <zlib.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <map>
@@ -109,8 +116,37 @@ bool writePng( const std::string& path, int width, int height, const std::vector
 //---------------------------------------------------------------------------
 // GL plumbing.
 //---------------------------------------------------------------------------
+/// GTTEST_SOFTWARE=1 asks for Apple's software renderer outright, which is
+/// what a GPU-less CI runner falls back to below. It reproduces the runner's
+/// costs on a machine with a GPU: there every new program's first draw is a
+/// multi-second shader compile, against milliseconds on the GPU.
+bool softwareRequested()
+{
+	const char* v = std::getenv( "GTTEST_SOFTWARE" );
+	return v != nullptr && *v != '\0' && std::strcmp( v, "0" ) != 0;
+}
+
 CGLContextObj createContext()
 {
+	if( softwareRequested() )
+	{
+		CGLPixelFormatAttribute attrs[] = { kCGLPFAOpenGLProfile,
+											(CGLPixelFormatAttribute)kCGLOGLPVersion_3_2_Core,
+											kCGLPFARendererID,
+											(CGLPixelFormatAttribute)kCGLRendererGenericFloatID,
+											kCGLPFAColorSize,
+											(CGLPixelFormatAttribute)24,
+											(CGLPixelFormatAttribute)0 };
+		CGLPixelFormatObj       pix  = nullptr;
+		GLint                   npix = 0;
+		CGLContextObj           ctx  = nullptr;
+		if( CGLChoosePixelFormat( attrs, &pix, &npix ) != kCGLNoError || pix == nullptr ||
+			CGLCreateContext( pix, nullptr, &ctx ) != kCGLNoError )
+			return nullptr;
+		CGLSetCurrentContext( ctx );
+		return ctx;
+	}
+
 	CGLPixelFormatAttribute attrs[] = { kCGLPFAOpenGLProfile,
 										(CGLPixelFormatAttribute)kCGLOGLPVersion_3_2_Core,
 										kCGLPFAAccelerated,
@@ -998,24 +1034,23 @@ int runPixels()
 //---------------------------------------------------------------------------
 // --out
 //---------------------------------------------------------------------------
-int runOut( const std::string& path, int w, int h, int frames, const std::vector< std::pair< std::string, std::string > >& sets )
+using Sets = std::vector< std::pair< std::string, std::string > >;
+
+/// --set, by name. A name that matches nothing is an error, never a no-op.
+bool applySets( GraticulePlugin& plugin, const Sets& sets )
 {
-	Host host;
-	if( !host.Open( w, h ) )
-		return 1;
-	Instance i( w, h );
 	for( const auto& kv : sets )
 	{
 		bool found = false;
 		for( unsigned int id = 0; id < PT_COUNT; ++id )
 		{
-			const char* name = i.plugin.GetParamName( id );
+			const char* name = plugin.GetParamName( id );
 			if( name != nullptr && kv.first == name )
 			{
-				if( i.plugin.GetParamType( id ) == FF_TYPE_TEXT )
-					i.plugin.SetTextParameter( id, kv.second.c_str() );
+				if( plugin.GetParamType( id ) == FF_TYPE_TEXT )
+					plugin.SetTextParameter( id, kv.second.c_str() );
 				else
-					i.plugin.SetFloatParameter( id, static_cast< float >( std::atof( kv.second.c_str() ) ) );
+					plugin.SetFloatParameter( id, static_cast< float >( std::atof( kv.second.c_str() ) ) );
 				found = true;
 				break;
 			}
@@ -1023,9 +1058,20 @@ int runOut( const std::string& path, int w, int h, int frames, const std::vector
 		if( !found )
 		{
 			std::printf( "no parameter named '%s'\n", kv.first.c_str() );
-			return 1;
+			return false;
 		}
 	}
+	return true;
+}
+
+int runOut( const std::string& path, int w, int h, int frames, const Sets& sets )
+{
+	Host host;
+	if( !host.Open( w, h ) )
+		return 1;
+	Instance i( w, h );
+	if( !applySets( i.plugin, sets ) )
+		return 1;
 	Image img;
 	for( int f = 0; f < std::max( 1, frames ); ++f )
 		img = renderAt( i.plugin, host.target, f / 60.0 );
@@ -1037,11 +1083,136 @@ int runOut( const std::string& path, int w, int h, int frames, const std::vector
 	return 0;
 }
 
+//---------------------------------------------------------------------------
+// --batch <jobs>
+//
+// Many renders in one process, for tools/sweep.py.
+//
+// Every new GL program pays for its shader on its first draw. On a GPU that is
+// milliseconds. Under the software renderer a GPU-less CI runner falls back to
+// it is a compile of the whole pattern shader, about 6 s on an M4 Max and over
+// 20 s on GitHub's macOS runner -- after which a 160x90 frame costs
+// hundredths of a second. The sweep used to start a fresh `--out` process for
+// each of its ~140 renders, paid the compile every time, and ran the CI step
+// out of its 25 minutes with over a quarter of the controls still to go.
+//
+// So one Renderer -- one program, compiled once -- draws every job. Each job
+// is still a FRESH GraticulePlugin: the constructor's defaults, frame 0,
+// nothing carried over from the job before. It is drawn through BuildFrame
+// and Renderer::Draw, the two calls ProcessOpenGL makes, at the times `--out`
+// uses (frame f at f/60 s, the clock forced to seconds). sweep.py proves both
+// halves of that on every run: the same job at both ends of a batch must come
+// out identical, and one setting drawn here and through `--out` must too.
+//
+// One job a line, tab-separated, since parameter names have spaces in them:
+//     out.png <TAB> WxH <TAB> frames [<TAB> Name=value ...]
+// Each finished job prints "done <seconds> <path>", flushed, so a caller that
+// has to kill a hung batch can say which job it was in.
+//---------------------------------------------------------------------------
+int runBatch( const std::string& jobsPath )
+{
+	std::ifstream in( jobsPath );
+	if( !in )
+	{
+		std::printf( "cannot read %s\n", jobsPath.c_str() );
+		return 1;
+	}
+
+	if( createContext() == nullptr )
+	{
+		std::printf( "no GL context\n" );
+		return 1;
+	}
+	std::printf( "gl %s | %s\n", glGetString( GL_RENDERER ), glGetString( GL_VERSION ) );
+	std::fflush( stdout );
+
+	Renderer renderer;
+	if( !renderer.InitGL() )
+	{
+		std::printf( "Renderer::InitGL FAILED: %s\n", renderer.Note().c_str() );
+		return 1;
+	}
+
+	std::map< std::pair< int, int >, Target > targets;
+	std::string                               line;
+	int                                       lineNo = 0;
+	while( std::getline( in, line ) )
+	{
+		++lineNo;
+		if( line.empty() )
+			continue;
+		std::vector< std::string > field;
+		for( size_t start = 0;; )
+		{
+			const size_t tab = line.find( '\t', start );
+			field.push_back( line.substr( start, tab == std::string::npos ? std::string::npos : tab - start ) );
+			if( tab == std::string::npos )
+				break;
+			start = tab + 1;
+		}
+		int w = 0, h = 0;
+		if( field.size() < 3 || std::sscanf( field[ 1 ].c_str(), "%dx%d", &w, &h ) != 2 || w <= 0 || h <= 0 )
+		{
+			std::printf( "line %d: want out.png<TAB>WxH<TAB>frames[<TAB>Name=value ...]\n", lineNo );
+			return 1;
+		}
+		const std::string& path   = field[ 0 ];
+		const int          frames = std::max( 1, std::atoi( field[ 2 ].c_str() ) );
+		Sets               sets;
+		for( size_t f = 3; f < field.size(); ++f )
+		{
+			const size_t eq = field[ f ].find( '=' );
+			if( eq == std::string::npos )
+			{
+				std::printf( "line %d: '%s' is not Name=value\n", lineNo, field[ f ].c_str() );
+				return 1;
+			}
+			sets.emplace_back( field[ f ].substr( 0, eq ), field[ f ].substr( eq + 1 ) );
+		}
+
+		const auto start = std::chrono::steady_clock::now();
+
+		GraticulePlugin plugin;
+		if( !applySets( plugin, sets ) )
+			return 1;
+
+		auto it = targets.find( { w, h } );
+		if( it == targets.end() )
+		{
+			it = targets.emplace( std::make_pair( w, h ), Target() ).first;
+			it->second.Create( w, h );
+		}
+		const Target& t = it->second;
+
+		for( int f = 0; f < frames; ++f )
+		{
+			glBindFramebuffer( GL_FRAMEBUFFER, t.fbo );
+			glViewport( 0, 0, t.w, t.h );
+			glClearColor( 0.0f, 0.0f, 0.0f, 0.0f );
+			glClear( GL_COLOR_BUFFER_BIT );
+			glBindFramebuffer( GL_FRAMEBUFFER, 0 );
+			renderer.Draw( plugin.BuildFrame( w, h, f / 60.0, f ), t.fbo );
+		}
+		const Image img = readBack( t );
+		if( !writePng( path, w, h, img.px ) )
+		{
+			std::printf( "could not write %s\n", path.c_str() );
+			return 1;
+		}
+
+		const double took = std::chrono::duration< double >( std::chrono::steady_clock::now() - start ).count();
+		std::printf( "done %.3f %s\n", took, path.c_str() );
+		std::fflush( stdout );
+	}
+	renderer.DeInitGL();
+	return 0;
+}
+
 int main( int argc, char** argv )
 {
-	std::string                                            out;
-	int                                                    w = 640, h = 360, frames = 1;
-	std::vector< std::pair< std::string, std::string > >   sets;
+	std::string out;
+	int         w = 640, h = 360, frames = 1;
+	Sets        sets;
 	for( int a = 1; a < argc; ++a )
 	{
 		const std::string arg = argv[ a ];
@@ -1059,6 +1230,8 @@ int main( int argc, char** argv )
 			return runList();
 		if( arg == "--pixels" )
 			return runPixels();
+		if( arg == "--batch" && a + 1 < argc )
+			return runBatch( argv[ a + 1 ] );
 		if( arg == "--out" && a + 1 < argc )
 			out = argv[ ++a ];
 		else if( arg == "--size" && a + 1 < argc )
@@ -1080,6 +1253,7 @@ int main( int argc, char** argv )
 	if( !out.empty() )
 		return runOut( out, w, h, frames, sets );
 	std::printf( "usage: gttest --font | --colours | --bars fixture.json | --defaults | --names | --list | --pixels\n"
-				 "       gttest --out f.png [--size WxH] [--frames N] [--set Name=value ...]\n" );
+				 "       gttest --out f.png [--size WxH] [--frames N] [--set Name=value ...]\n"
+				 "       gttest --batch jobs.tsv\n" );
 	return 2;
 }

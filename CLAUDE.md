@@ -22,7 +22,8 @@ Read `AGENTS.md` before changing a pattern, the presets or the parameter list.
 - Preset 1 IS the constructor's defaults: `./build/gttest --defaults`
 - No name over 16 characters: `./build/gttest --names`
 - Specific pixels of every pattern: `./build/gttest --pixels`
-- No dead controls: `python3 tools/sweep.py` (`--size WxH`, `--jobs N`)
+- No dead controls: `python3 tools/sweep.py` (`--size WxH`, `--jobs N` batches, `--timeout S`)
+- CI's renderer on a Mac with a GPU: prefix any of these with `GTTEST_SOFTWARE=1`
 - Preset rows the right width and kind: `python3 tools/check_presets.py`
 
 ## Notes
