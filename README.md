@@ -106,6 +106,10 @@ it's the single most useful thing to attach.
 - Windows is built by CI only and has never been run by anyone.
 - No browser demo yet.
 
+<!-- attributions:start -->
+This project is built on other people's work — see [ATTRIBUTIONS.md](ATTRIBUTIONS.md).
+<!-- attributions:end -->
+
 ## Licence
 
 MIT. See [LICENSE](LICENSE) and [ATTRIBUTIONS.md](ATTRIBUTIONS.md).
