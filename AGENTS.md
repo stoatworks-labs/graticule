@@ -65,12 +65,12 @@ No release tag, no website registration, no browser demo.
   2026-10-12. Anything that renders many frames shares one program (`gttest --batch`);
   `GTTEST_SOFTWARE=1` reproduces the runner locally.
 
-## Do not trust
+## Generated, do not edit
 
-- **`ATTRIBUTIONS.md`** and **`source/StoatworksAbout.h`** are hand-written in the shape the
-  fleet's sync scripts generate. Register the project in `stoatworks-website`'s
-  `projects.json`, `stoatworks-backend`'s `sync-about.py` TARGETS and `attributions/names.json`
-  and re-run the syncs before the first release. The About header's facts were chosen so
-  the button count — and therefore the parameter count — does not change when it is
-  regenerated; if the sync adds a guide link, `PT_ABOUT_BUTTON_n` and the static_assert in
-  `Graticule.cpp` will tell you.
+- **`ATTRIBUTIONS.md`** and the README block between the `attributions` markers come from
+  `stoatworks-backend/scripts/sync-attributions.py`; **`source/StoatworksAbout.h`** from
+  `sync-about.py`; the README block between the `downloads` markers from
+  `release/gen-downloads.py`. Change the masters there and re-run the sync.
+- The About block's size follows the header: when a sync adds or drops a link,
+  `PT_ABOUT_BUTTON_n` in `Controls.h` has to follow, and the static_assert in
+  `Graticule.cpp` says so. The guide link added the fourth button before v0.1.0.

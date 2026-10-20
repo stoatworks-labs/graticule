@@ -16,9 +16,8 @@ Test patterns and LED grids for Resolume, generated live at the output's own ras
 
 The static-image version of this is [Test Card](https://github.com/stoatworks-labs/test-card),
 which renders a PNG per output from an imported output map. Graticule is the same patterns
-as a Resolume source: drop it on a layer and it draws at whatever size the composition or
-the slice gives it, with a text burn-in, a moving marker and a frame counter, none of which
-a PNG can manage.
+as a Resolume source: drop it on a layer and it draws at whatever size Resolume hands it,
+with a text burn-in, a moving marker and a frame counter, none of which a PNG can manage.
 
 It's an FFGL source plugin for Resolume Arena and Avenue.
 
