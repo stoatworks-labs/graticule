@@ -23,10 +23,10 @@ harness, rather than captured from Resolume.*
 > been checked pixel by pixel through the plugin's own class in a headless GL context, the RP 219
 > bars against a measurement of ffmpeg's `smptehdbars` at four rasters, and all 69 controls are
 > shown to change the picture. The bundle registers, instantiates and draws in the fleet's own test
-> host, `oxbow`. It **hasn't been dropped into a clip in Resolume yet**: it has sat in Arena
-> 7.27.1's Extra Effects folder on my Mac without being instantiated, and the Windows build has
-> only ever been built. *What has been checked*, near the end, has the details. Try it on a spare
-> layer before it goes anywhere near a show.
+> host, `oxbow`. On Windows it loads and draws in Resolume Arena 7.27.1, on software rendering
+> with no GPU, and 68 of its 69 controls were seen changing the picture there. On a Mac it **hasn't
+> been dropped into a clip in Resolume yet**. *What has been checked*, near the end, has the
+> details. Try it on a spare layer before it goes anywhere near a show.
 >
 > This codebase was created with AI assistance, directed and reviewed by a human author.
 
@@ -79,7 +79,8 @@ it's selected, whatever the inspector says (see *Presets*).
 
 Most of the controls are numbers in real units, pixels, counts and percentages, declared to
 Resolume as integers with their real ranges, so you type 192 rather than hunting for 0.0937 on a
-slider. Resolume should show them as the numbers themselves; nobody has seen that in Resolume yet.
+slider. Arena reports them with their real ranges (Pitch 2 to 1024 and so on), though nobody has
+yet looked at how its inspector draws them.
 **Level** and **Speed** are ordinary 0-to-1 sliders. Each colour is one swatch, named for what it
 colours (**Line Colour**, **Border Colour** and so on). Underneath it's three parameters, and
 Resolume draws them as a single swatch under the red one's name; a host that doesn't do swatches
@@ -693,7 +694,8 @@ If you're reporting a bug, it's the most useful thing to attach.
 
 ## Known limits
 
-- **It hasn't run inside Resolume yet**, on either platform; see *What has been checked*.
+- **It hasn't run inside Resolume on a Mac yet**, and on Windows only on software rendering; see
+  *What has been checked*.
 - **The cabinet labels count from the raster's corner**, not from the origin, so a wall that
   doesn't start at 0, 0 doesn't start at A1.
 - **Uniform cabinets only.** One cabinet size and one origin, filling the raster: no irregular
@@ -712,7 +714,10 @@ If you're reporting a bug, it's the most useful thing to attach.
 - **The frame counter goes round after 999,999 frames**, about four and a half hours at 60 frames a
   second.
 - **Checked on one Mac**, an Apple M4 Max on macOS 26.4.1, through Apple's OpenGL 4.1 on Metal.
-- **No browser demo.**
+- **The browser demo is the plugin's code, not the plugin.** It runs Graticule's own C++ and
+  shaders in your browser at
+  [graticule-demo.stoatworks-labs.com](https://graticule-demo.stoatworks-labs.com), with the
+  browser standing in for Resolume.
 
 ---
 
@@ -745,6 +750,16 @@ on Metal) and reads the pixels back.
   checks every row is the right width and kind.
 - **In a host.** The universal bundle registers, instantiates and renders 120 frames in `oxbow`, the
   fleet's FFGL test host.
+- **In Resolume on Windows.** The x64 build loads, registers as a source and draws in Resolume Arena
+  7.27.1 on win-lab, a Windows machine with no GPU (Mesa's llvmpipe does the rendering), at the
+  composition's own 1280 × 720. All 75 parameters, the About block included, are there with the
+  names, order, types, ranges and defaults declared, and Arena's log stays clean. The fleet's Arena
+  check then moves each control through Arena's own REST API and watches the clip's thumbnail: 68
+  of the 69 changed the picture there and none read dead. The one left out is Edge Border, whose
+  1-pixel line sits on the outermost pixels, which Arena's 320 × 240 thumbnail never samples. On the
+  first run Module Width and Module Height read dead for the same reason (at the module size
+  checked, every module line fell between the pixels the thumbnail reads), and a module of 5 px
+  showed them working. Software rendering says nothing about a GPU or about speed.
 - **This guide.** Every number and picture in it was read off a render of the current build: the
   LED examples' edges and module lines, the code values in the tables, the marker's position and
   speed, the burn-in's limits and the preset override.
@@ -754,10 +769,7 @@ What hasn't been checked:
 - **Resolume on macOS.** The bundle has been in Arena 7.27.1's Extra Effects folder on my Mac since
   September and has never been dropped into a clip. Its panel in Resolume, Resolume's clock driving
   the marker, and the raster Resolume hands it are all untried there.
-- **Windows.** It's built by CI, and nobody has run it.
-
-<!-- ARENA-GATE -->
-
+- **Resolume on a GPU, or on Windows with one.** Arena has only run it on software rendering.
 - **A real wall, projector or SDI chain.** The patterns are right as pixels. What a particular
   processor or display does with them is the thing they're for, and none has been looked at
   through one yet.

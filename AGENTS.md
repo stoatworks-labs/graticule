@@ -8,14 +8,21 @@ solid, greyscale and pixel check, with a burn-in, a motion marker and a frame co
 
 ## Status
 
-Built 2026-09-17. Every check in `tools/verify.sh` passes on macOS: the font, the RP 219
-colours and geometry against ffmpeg's measurement, the pixel checks, the preset table, the
-dead-control sweep, registration, lipo, plist, ad-hoc codesign and oxbow. The universal
-bundle is installed in Arena 7.27.1's Extra Effects on the development machine. **It has
-not been dropped into a clip inside Arena yet**, and the Windows build is CI-only and has
-never been run.
+Built 2026-09-17, released as v0.1.0 on 2026-10-20. Every check in `tools/verify.sh`
+passes on macOS: the font, the RP 219 colours and geometry against ffmpeg's measurement,
+the pixel checks, `--pipe`, the preset table, the dead-control sweep, the demo's shader and
+wasm drift check, registration, lipo, plist, ad-hoc codesign and oxbow.
 
-No release tag, no website registration, no browser demo.
+On Windows, CI's MSVC build passed the fleet's Arena gate on win-lab (Arena 7.27.1, Mesa
+llvmpipe): 9 checks pass, 68 of 69 controls live, none dead. **It has never been dropped
+into a clip in Arena on macOS**, and no real wall, projector or SDI chain has seen it.
+
+**The gate sees a thumbnail, not the output.** Arena's 320×240 thumbnail of a 1280×720
+composition reads pixels 1-2 of every 4, so a 1 px line on a multiple of 4, or on the
+outermost pixels, reads exactly 0.00 there. Module lines at the default tile/module sizes
+did; plugin-bench's `arena/expect/graticule.json` probes Module Width/Height at 5 and marks
+Edge Border inert, with the reason. Reproduce any such reading offline before believing a
+DEAD: render with `gttest --out --size 1280x720` and average pixels 1-2 of each 4×4 block.
 
 ## Where the truth lives
 

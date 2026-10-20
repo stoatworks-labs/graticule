@@ -79,10 +79,9 @@ Read `AGENTS.md` before changing a pattern, the presets or the parameter list.
 - Public repo. "Commit" = commit **and** push.
 
 ## Not done yet
-- Not yet instantiated inside Arena (installed into Extra Effects 2026-09-17).
-- No release tag; not registered on the website; `StoatworksAbout.h` and `ATTRIBUTIONS.md`
-  are provisional hand copies.
-- No browser demo.
+- Never instantiated inside Arena on macOS. Windows: the Arena gate passed on win-lab
+  (llvmpipe, no GPU) on 2026-10-20; nothing has run it on a GPU.
+- No OpenFX port.
 
 ## Diagnostics
 

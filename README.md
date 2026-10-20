@@ -8,9 +8,9 @@
 > pattern is rendered by the real plugin class in a real GL context and specific pixels are
 > checked (`gttest --pixels`), all 69 controls are proven to change the picture
 > (`tools/sweep.py`), and the bundle registers, instantiates and lights pixels in the
-> fleet's oxbow host. **It's been installed into Resolume Arena 7.27.1's plugin folder but
-> hasn't been dropped into a clip there yet**, so the last step of proof is a screenshot
-> nobody has taken.
+> fleet's oxbow host. On Windows it loads, registers and draws in Resolume Arena 7.27.1 on
+> software rendering, and 68 of the 69 controls are seen changing the picture through Arena's
+> own API. **On macOS it hasn't been dropped into a clip in Resolume yet.**
 
 Test patterns and LED grids for Resolume, generated live at the output's own raster.
 
@@ -119,10 +119,16 @@ it's the single most useful thing to attach.
   (`gttest --pixels`); the bars verified against ffmpeg's measured geometry at 1920×1080,
   3840×2160, 1280×720 and 2048×1080.
 - The bundle registers, instantiates and renders 120 frames under oxbow.
-- Installed into Arena 7.27.1's Extra Effects on the development machine; **not yet
-  instantiated inside Arena**.
-- Windows is built by CI only and has never been run by anyone.
-- No browser demo yet.
+- **Windows, in Resolume Arena 7.27.1** (win-lab: Mesa llvmpipe, no GPU): CI's MSVC build
+  loads, registers as a source and draws at the composition's 1280×720, with all 75
+  parameters as declared and a clean log. The fleet's Arena gate (plugin-bench
+  `arena/expect/graticule.json`) passes, with 68 of the 69 controls changing the picture
+  and none dead. Edge Border is the one it can't see: a 1 px line on the outermost pixels,
+  which Arena's 320×240 thumbnail never samples.
+- **macOS:** installed into Arena 7.27.1's Extra Effects on the development machine, but
+  **never instantiated inside Arena there**.
+- No real wall, projector or SDI chain has looked at it yet.
+- The browser demo runs the plugin's own C++ and shaders as WebAssembly; see *Browser demo*.
 
 <!-- attributions:start -->
 This project is built on other people's work — see [ATTRIBUTIONS.md](ATTRIBUTIONS.md).
