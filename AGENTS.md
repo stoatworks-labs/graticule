@@ -45,6 +45,12 @@ No release tag, no website registration, no browser demo.
 - **Every parameter name must be unique**, because `gttest --set` and the sweep find
   parameters by name. The alignment chart's switches are "Centre Marks" and "Diagonal
   Cross" precisely because the grid already had "Centre Target" and "Diagonals".
+  Resolume saves, and OSC addresses, parameters by name too (lower-cased, spaces
+  removed), so a rename after a release breaks saved compositions.
+- **A colour's red component carries the swatch's name.** Resolume draws a RED/GREEN/BLUE
+  run as one swatch labelled with the red parameter's name and hides the other two, so
+  the red one is "Line Colour" (or plain "Background", which would be 17 characters
+  with " Colour") and never "Line Red". Renamed before v0.1.0, when it was still free.
 - `patch`, `sample`, `input`, `output`, `filter`, `common`, `active`, `half` are GLSL
   reserved words. `patch` cost a build here. Shader errors surface only at runtime, in the
   diagnostics log, and in `gttest --pixels` as `InitGL FAILED`.

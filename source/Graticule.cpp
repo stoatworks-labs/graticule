@@ -101,8 +101,13 @@ GraticulePlugin::GraticulePlugin()
 	};
 	auto colour = [ this ]( unsigned int first, const char* label, float r, float g, float b ) {
 		// SetParamInfo copies the name into a std::string, so temporaries are fine.
-		const std::string base = label;
-		SetParamInfo( first + 0, ( base + " Red" ).c_str(), FF_TYPE_RED, r );
+		// Resolume draws a RED/GREEN/BLUE run as ONE swatch labelled with the red
+		// component's name and hides the other two, so the red one carries the
+		// swatch's name ("Line Colour"), never "Line Red". "Background Colour"
+		// is 17 characters, one over FFGL's 16, so that one is plain "Background".
+		const std::string base   = label;
+		const std::string swatch = base.size() + 7 <= 16 ? base + " Colour" : base;
+		SetParamInfo( first + 0, swatch.c_str(), FF_TYPE_RED, r );
 		SetParamInfo( first + 1, ( base + " Green" ).c_str(), FF_TYPE_GREEN, g );
 		SetParamInfo( first + 2, ( base + " Blue" ).c_str(), FF_TYPE_BLUE, b );
 		mParams[ first + 0 ] = r;
