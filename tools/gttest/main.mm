@@ -16,6 +16,8 @@
 //                           render a frame, for eyes
 //   --batch jobs.tsv        render many frames with one compiled shader, for
 //                           tools/sweep.py
+//   --pipe [--size WxH] [--fps N] [--frames N] [--script cues.txt]
+//                           raw RGBA frames on stdout, for the video pipeline
 //
 // GTTEST_SOFTWARE=1 forces Apple's software renderer, which a GPU-less CI
 // runner falls back to.
@@ -24,9 +26,12 @@
 
 #include <zlib.h>
 
+#include <unistd.h>
+
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <csignal>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -1208,10 +1213,239 @@ int runBatch( const std::string& jobsPath )
 	return 0;
 }
 
+//---------------------------------------------------------------------------
+// --pipe: raw frames out, and the cue sheet that automates them.
+//
+// The fleet's frame format -- astable's attest, needle's ndtest -- so one
+// filming script can drive any of the plugins:
+//
+//     gttest --pipe --size 1920x1080 --fps 30 --frames 900 [--script cues.txt] \
+//            [--set Name=value ...] \
+//       | ffmpeg -f rawvideo -pix_fmt rgba -s 1920x1080 -r 30 -i - out.mov
+//
+// Graticule is a SOURCE, so there is no stdin side. Frames are top row first,
+// RGBA8, written until --frames is reached or, with no count, until the reader
+// hangs up. Frame n is drawn at n / fps seconds, so two runs of one command
+// are byte-identical and the burn-in's frame counter is the frame index.
+//
+// `--script` is a plain text file of `frame  Parameter Name  value` lines
+// (`frame  Name=value` too), `#` starting a comment. Each parameter holds its
+// first key before it and its last key after it, and is interpolated linearly
+// between. An OPTION interpolates too -- Pattern from 0 to 7 passes through
+// every pattern between -- so key an option on two adjacent frames to cut.
+//
+// Exit codes: 0 when the run ends as asked; 1 when the reader hangs up before
+// the asked-for --frames (with a message, never SIGPIPE's silent 141); 2 when
+// the script names something that is not a numeric parameter. A misspelled cue
+// that did nothing would make a take that looks deliberate and is wrong. Text
+// parameters are set with --set, not cued.
+//---------------------------------------------------------------------------
+using Track = std::vector< std::pair< int, float > >;
+
+/// Parses the cue sheet. Returns false, with a message, on a malformed line.
+bool loadScript( const std::string& path, std::map< std::string, Track >& tracks, std::string& error )
+{
+	std::ifstream file( path );
+	if( !file )
+	{
+		error = "cannot open " + path;
+		return false;
+	}
+	std::string line;
+	int         lineNo = 0;
+	while( std::getline( file, line ) )
+	{
+		++lineNo;
+		const size_t hash = line.find( '#' );
+		if( hash != std::string::npos )
+			line.erase( hash );
+		std::istringstream in( line );
+		int                frame = 0;
+		if( !( in >> frame ) )
+			continue;
+
+		// The name is every word but the last, because names have spaces in
+		// them ("Line Width") and a value never does.
+		std::vector< std::string > words;
+		for( std::string word; in >> word; )
+			words.push_back( word );
+		std::string valueText;
+		if( !words.empty() && words.back().find( '=' ) != std::string::npos )
+		{
+			const size_t eq = words.back().find( '=' );
+			valueText       = words.back().substr( eq + 1 );
+			words.back().erase( eq );
+			if( words.back().empty() )
+				words.pop_back();
+		}
+		else if( words.size() >= 2 )
+		{
+			valueText = words.back();
+			words.pop_back();
+		}
+		std::string name;
+		for( const std::string& part : words )
+			name += name.empty() ? part : " " + part;
+		char* end = nullptr;
+		const float value = std::strtof( valueText.c_str(), &end );
+		if( name.empty() || valueText.empty() || end == valueText.c_str() )
+		{
+			error = path + ":" + std::to_string( lineNo ) + ": expected `frame  Parameter Name  value`";
+			return false;
+		}
+		tracks[ name ].emplace_back( frame, value );
+	}
+	for( auto& entry : tracks )
+		std::stable_sort( entry.second.begin(), entry.second.end(),
+						  []( const auto& a, const auto& b ) { return a.first < b.first; } );
+	return true;
+}
+
+float valueAt( const Track& track, int frame )
+{
+	if( frame <= track.front().first )
+		return track.front().second;
+	if( frame >= track.back().first )
+		return track.back().second;
+	for( size_t i = 1; i < track.size(); ++i )
+	{
+		if( frame <= track[ i ].first )
+		{
+			const auto& a = track[ i - 1 ];
+			const auto& b = track[ i ];
+			const float t = b.first > a.first ? float( frame - a.first ) / float( b.first - a.first ) : 1.0f;
+			return a.second + ( b.second - a.second ) * t;
+		}
+	}
+	return track.back().second;
+}
+
+int runPipe( int w, int h, double fps, int frames, const std::string& scriptPath, const Sets& sets )
+{
+	// A reader that stops early -- `head -c`, ffmpeg's own -t -- would
+	// otherwise kill this process with SIGPIPE. Ignored, the write fails and
+	// the loop ends the ordinary way.
+	std::signal( SIGPIPE, SIG_IGN );
+
+	if( w <= 0 || h <= 0 || !( fps > 0.0 ) )
+	{
+		std::fprintf( stderr, "gttest: --pipe needs a positive size and --fps\n" );
+		return 1;
+	}
+
+	// Resolve the cue sheet against the parameter list before any GL, so a
+	// bad name costs nothing.
+	std::vector< std::pair< unsigned int, Track > > automation;
+	if( !scriptPath.empty() )
+	{
+		std::map< std::string, Track > tracks;
+		std::string                    error;
+		if( !loadScript( scriptPath, tracks, error ) )
+		{
+			std::fprintf( stderr, "gttest: %s\n", error.c_str() );
+			return 2;
+		}
+		GraticulePlugin probe;
+		for( const auto& entry : tracks )
+		{
+			bool found = false;
+			for( unsigned int id = 0; id < PT_COUNT && !found; ++id )
+			{
+				const char* name = probe.GetParamName( id );
+				if( name == nullptr || entry.first != name )
+					continue;
+				if( probe.GetParamType( id ) == FF_TYPE_TEXT )
+				{
+					std::fprintf( stderr, "gttest: \"%s\" is a text parameter; set it with --set, not a cue\n",
+								  entry.first.c_str() );
+					return 2;
+				}
+				automation.emplace_back( id, entry.second );
+				found = true;
+			}
+			if( !found )
+			{
+				std::fprintf( stderr, "gttest: the script names \"%s\", which is not a parameter (try --list)\n",
+							  entry.first.c_str() );
+				return 2;
+			}
+		}
+	}
+
+	// stdout is the video from here on, so nothing below prints to it.
+	if( createContext() == nullptr )
+	{
+		std::fprintf( stderr, "gttest: no GL context\n" );
+		return 1;
+	}
+	Target target;
+	target.Create( w, h );
+	GraticulePlugin plugin;
+	plugin.ForceSecondsClock();
+	FFGLViewportStruct vp = { 0, 0, static_cast< FFUInt32 >( w ), static_cast< FFUInt32 >( h ) };
+	if( plugin.InitGL( &vp ) != FF_SUCCESS )
+	{
+		std::fprintf( stderr, "gttest: InitGL failed\n" );
+		return 1;
+	}
+
+	int status = 0;
+	for( const auto& kv : sets )
+	{
+		bool found = false;
+		for( unsigned int id = 0; id < PT_COUNT && !found; ++id )
+		{
+			const char* name = plugin.GetParamName( id );
+			if( name == nullptr || kv.first != name )
+				continue;
+			if( plugin.GetParamType( id ) == FF_TYPE_TEXT )
+				plugin.SetTextParameter( id, kv.second.c_str() );
+			else
+				plugin.SetFloatParameter( id, static_cast< float >( std::atof( kv.second.c_str() ) ) );
+			found = true;
+		}
+		if( !found )
+		{
+			std::fprintf( stderr, "gttest: no parameter named '%s'\n", kv.first.c_str() );
+			status = 2;
+		}
+	}
+
+	for( int f = 0; status == 0 && ( frames <= 0 || f < frames ); ++f )
+	{
+		for( const auto& track : automation )
+			plugin.SetFloatParameter( track.first, valueAt( track.second, f ) );
+		const Image img = renderAt( plugin, target, f / fps );
+
+		size_t written = 0;
+		while( written < img.px.size() )
+		{
+			const ssize_t put = write( STDOUT_FILENO, img.px.data() + written, img.px.size() - written );
+			if( put <= 0 )
+				break;
+			written += static_cast< size_t >( put );
+		}
+		if( written < img.px.size() )
+		{
+			// With no count asked for, the reader hanging up IS the end.
+			if( frames > 0 )
+			{
+				std::fprintf( stderr, "gttest: the reader closed the pipe after %d of %d frames\n", f, frames );
+				status = 1;
+			}
+			break;
+		}
+	}
+	plugin.DeInitGL();
+	return status;
+}
+
 int main( int argc, char** argv )
 {
-	std::string out;
+	std::string out, scriptPath;
 	int         w = 640, h = 360, frames = 1;
+	bool        pipe = false, sizeGiven = false, framesGiven = false;
+	double      fps = 60.0;
 	Sets        sets;
 	for( int a = 1; a < argc; ++a )
 	{
@@ -1234,10 +1468,20 @@ int main( int argc, char** argv )
 			return runBatch( argv[ a + 1 ] );
 		if( arg == "--out" && a + 1 < argc )
 			out = argv[ ++a ];
+		else if( arg == "--pipe" )
+			pipe = true;
 		else if( arg == "--size" && a + 1 < argc )
-			std::sscanf( argv[ ++a ], "%dx%d", &w, &h );
+			sizeGiven = std::sscanf( argv[ ++a ], "%dx%d", &w, &h ) == 2;
+		else if( arg == "--width" && a + 1 < argc )
+			w = std::atoi( argv[ ++a ] ), sizeGiven = true;
+		else if( arg == "--height" && a + 1 < argc )
+			h = std::atoi( argv[ ++a ] ), sizeGiven = true;
+		else if( arg == "--fps" && a + 1 < argc )
+			fps = std::atof( argv[ ++a ] );
+		else if( arg == "--script" && a + 1 < argc )
+			scriptPath = argv[ ++a ];
 		else if( arg == "--frames" && a + 1 < argc )
-			frames = std::atoi( argv[ ++a ] );
+			frames = std::atoi( argv[ ++a ] ), framesGiven = true;
 		else if( arg == "--set" && a + 1 < argc )
 		{
 			const std::string kv = argv[ ++a ];
@@ -1250,10 +1494,13 @@ int main( int argc, char** argv )
 			sets.emplace_back( kv.substr( 0, eq ), kv.substr( eq + 1 ) );
 		}
 	}
+	if( pipe )
+		return runPipe( sizeGiven ? w : 1920, sizeGiven ? h : 1080, fps, framesGiven ? frames : 0, scriptPath, sets );
 	if( !out.empty() )
 		return runOut( out, w, h, frames, sets );
 	std::printf( "usage: gttest --font | --colours | --bars fixture.json | --defaults | --names | --list | --pixels\n"
 				 "       gttest --out f.png [--size WxH] [--frames N] [--set Name=value ...]\n"
+				 "       gttest --pipe [--size WxH] [--fps N] [--frames N] [--script cues.txt] [--set Name=value ...]\n"
 				 "       gttest --batch jobs.tsv\n" );
 	return 2;
 }

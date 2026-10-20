@@ -13,6 +13,8 @@ Read `AGENTS.md` before changing a pattern, the presets or the parameter list.
 - Render a frame offline: `./build/gttest --out /tmp/f.png --size 1920x1080 --set "Preset=7"`
 - Set anything by name: `--set "Pattern=3" --set "Pitch=120" --set "Text=HELLO"`
 - List parameters: `./build/gttest --list`
+- Raw RGBA frames for the video: `./build/gttest --pipe --size 1920x1080 --fps 30 --frames 900 --script cues.txt | ffmpeg -f rawvideo -pix_fmt rgba -s 1920x1080 -r 30 -i - out.mov`
+  (cues are `frame  Parameter Name  value`, interpolated; key an option on adjacent frames to cut)
 
 ## Verify
 - Everything: `tools/verify.sh` (fresh universal build + every check, ~30 s)

@@ -155,6 +155,40 @@ else
 	fail "gttest --bars"
 fi
 
+#---------------------------------------------------------------------------
+# --pipe, the frame format the video is rendered through. Five frames asked for
+# must be exactly five frames out and two runs of it byte-identical; a cue
+# naming no parameter must be refused, not silently do nothing to a take; and
+# a reader hanging up early must end the run with exit 1 and a message, never
+# SIGPIPE's silent 141.
+#---------------------------------------------------------------------------
+step "pipe"
+frame=$(( 64 * 36 * 4 ))
+pipedir=$(mktemp -d)
+printf '0 Pattern 0\n2 Pattern 0\n3 Pattern 2\n' > "$pipedir/cues"
+"$BUILD/gttest" --pipe --size 64x36 --frames 5 --script "$pipedir/cues" > "$pipedir/a" 2>/dev/null
+status=$?
+"$BUILD/gttest" --pipe --size 64x36 --frames 5 --script "$pipedir/cues" > "$pipedir/b" 2>/dev/null
+got=$(wc -c < "$pipedir/a" | tr -d ' ')
+if [ "$status" -eq 0 ] && [ "$got" = "$(( frame * 5 ))" ] && cmp -s "$pipedir/a" "$pipedir/b"; then
+	pass "5 frames asked, exactly 5 out, the same twice"
+else
+	fail "--pipe gave $got bytes (want $(( frame * 5 ))), exit $status, or two runs differ"
+fi
+if ! cmp -s <(head -c "$frame" "$pipedir/a") <(tail -c "$frame" "$pipedir/a"); then
+	pass "the cue sheet changes the picture"
+else
+	fail "frame 0 and frame 4 are identical although the cue sheet changes Pattern"
+fi
+printf '0 No Such Control 0.5\n' > "$pipedir/bad"
+"$BUILD/gttest" --pipe --size 64x36 --frames 1 --script "$pipedir/bad" >/dev/null 2>&1
+status=$?
+if [ "$status" -eq 2 ]; then pass "a cue naming no parameter is refused (exit 2)"; else fail "a cue naming no parameter gave exit $status, not 2"; fi
+"$BUILD/gttest" --pipe --size 64x36 --frames 50 2>/dev/null | head -c 1 >/dev/null
+status=${PIPESTATUS[0]}
+if [ "$status" -eq 1 ]; then pass "a closed stdout ends the run with exit 1, not SIGPIPE"; else fail "a closed stdout gave exit $status, not 1"; fi
+rm -rf "$pipedir"
+
 step "presets"
 if python3 tools/check_presets.py >/dev/null 2>&1; then pass "every row the right width and kind"; else fail "tools/check_presets.py"; fi
 
