@@ -23,7 +23,43 @@ It's an FFGL source plugin for Resolume Arena and Avenue.
 
 <!-- downloads:start -->
 
+## Download
+
+**[v0.1.0](https://github.com/stoatworks-labs/graticule/releases/tag/v0.1.0)** — prebuilt for macOS and Windows. Pick your platform:
+
+<details>
+<summary><b>macOS</b> — Universal (Apple Silicon + Intel)</summary>
+
+| Build | Download | Size |
+| --- | --- | --- |
+| Universal (Apple Silicon + Intel) · .dmg disk image | [`graticule-0.1.0-macos-universal.dmg`](https://github.com/stoatworks-labs/graticule/releases/download/v0.1.0/graticule-0.1.0-macos-universal.dmg) | 244 KB |
+| Universal (Apple Silicon + Intel) · .zip archive | [`graticule-macos-universal.zip`](https://github.com/stoatworks-labs/graticule/releases/latest/download/graticule-macos-universal.zip) | 206 KB |
+
+</details>
+
+<details>
+<summary><b>Windows</b> — x64</summary>
+
+| Build | Download | Size |
+| --- | --- | --- |
+| x64 · .exe installer | [`graticule-0.1.0-windows-x86_64-setup.exe`](https://github.com/stoatworks-labs/graticule/releases/download/v0.1.0/graticule-0.1.0-windows-x86_64-setup.exe) | 229 KB |
+| x64 · .zip archive | [`graticule-windows-x86_64.zip`](https://github.com/stoatworks-labs/graticule/releases/latest/download/graticule-windows-x86_64.zip) | 126 KB |
+
+</details>
+
+All builds, checksums and release notes: [github.com/stoatworks-labs/graticule/releases](https://github.com/stoatworks-labs/graticule/releases).
+
+macOS builds are signed and notarised and open normally. The Windows builds are unsigned, so SmartScreen warns once.
+
 <!-- downloads:end -->
+
+[![Graticule — test patterns and LED cabinet grids, for Resolume](docs/video-thumb.png)](https://www.youtube.com/watch?v=HAlnt-y3Ld4)
+
+*[Watch it](https://www.youtube.com/watch?v=HAlnt-y3Ld4) — 59 seconds, silent: RP 219 at full
+and legal range with the pluge brightened, the grids, the alignment chart's corner, LED cabinets
+at P2.6, P2.9 and P3.9, the pixel check beside the same pixels through a 95% scale, and the
+latency sweep. Rendered by `gttest --pipe`, not captured from Resolume; where a beat is about
+single pixels it shows them enlarged, because the player is scaling the video.*
 
 ## Patterns
 
