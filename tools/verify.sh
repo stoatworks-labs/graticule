@@ -6,6 +6,8 @@
 #
 #   shaders       does every shader compile, through a real GLSL compiler,
 #                 before a host has to find out
+#   demo          is the browser demo still the plugin: its copy of the GLSL
+#                 and the sources its committed WebAssembly was built from
 #   suites        the font, the colours, the RP 219 geometry against ffmpeg's
 #                 measurement, the defaults, the names, and the pixels
 #   presets       is every preset row the right width and kind
@@ -132,6 +134,32 @@ if shaders_compile; then
 	pass "every shader compiles"
 else
 	fail "a shader does not compile"
+fi
+
+#---------------------------------------------------------------------------
+# The browser demo (graticule-demo.stoatworks-labs.com). demo/shaders.js
+# carries copies of source/Shaders.cpp's raw strings and the order Render.cpp
+# compiles them in, and demo/graticule-core.wasm is the plugin's C++ built by
+# demo/tools/build-wasm.sh and committed (the deploy has no build step). A copy
+# that drifts still paints a plausible test pattern, which is the worst kind,
+# so the drift has to fail here instead: rerun
+# `python3 demo/tools/check_shaders.py --write` after changing a shader, and
+# `demo/tools/build-wasm.sh` (emscripten) after changing anything in source/ --
+# demo/wasm/inputs.sha256 records what the .wasm was built from.
+#---------------------------------------------------------------------------
+step "demo"
+if [[ -f demo/tools/check_shaders.py ]]; then
+	log="$( mktemp )"
+	if python3 demo/tools/check_shaders.py >"$log" 2>&1; then
+		pass "$( tail -1 "$log" )"
+	else
+		grep -E '^FAIL|^ ' "$log" | sed -n '1,24p'
+		tail -1 "$log"
+		fail "the browser demo is not the plugin any more: its shaders or its .wasm are stale"
+	fi
+	rm -f "$log"
+else
+	printf '   skipped: no demo/\n'
 fi
 
 step "build"

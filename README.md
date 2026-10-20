@@ -59,6 +59,25 @@ on the wall means a scaler in the chain, never the pattern.
   override: while one is selected the inspector's numbers for the columns it sets aren't
   the truth, because Resolume doesn't accept value events from a plugin.
 
+## Browser demo
+
+**<https://graticule-demo.stoatworks-labs.com/>** runs the plugin itself, not a port of it:
+`source/Graticule.cpp` and everything it calls (the parameter table, the preset override,
+the conversion of every control into whole pixels, the RP 219 layout and the 5×7 font),
+with the FFGL SDK classes it uses, compiled unmodified to WebAssembly by
+`demo/tools/build-wasm.sh` (emscripten) and drawing with its own GLSL in WebGL2. The panel
+is read back from the plugin's own declarations. Since the whole point is pixels, the page
+draws at your screen's own device pixels by default, one plugin pixel to one screen pixel,
+and says under the picture whether the browser kept it that way; there's a "Scaled to fit"
+setting for watching what a scaler does to the pixel check. The page is the host, and a
+thin one: no input (it's a source), the browser's clock, and one GL entry point translated
+for WebGL2 (`demo/wasm/gl_shim.cpp`). Twenty settings drawn by the page came out identical
+to `gttest --out`, pixel for pixel, in Chrome on Apple's Metal; on Chrome's software
+renderer two of them were one code value out where a level lands exactly half-way between
+two. `tools/verify.sh` fails if `demo/shaders.js` or any input of the `.wasm` has drifted
+from `source/`. It's a demo, not the plugin; the page lists everything it doesn't
+reproduce.
+
 ## Installing
 
 Copy `Graticule.bundle` (macOS) or `Graticule.dll` (Windows) into
